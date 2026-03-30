@@ -1,181 +1,231 @@
-## 📑 Automação de Conteúdo
+# AI Content Automation System
 
-A **Automação de Conteúdo** é um orquestrador completo para:
+A complete AI-powered content automation system designed to collect trending topics, generate articles, review quality, create images, publish content to Ghost, and automatically share published posts on X (Twitter).
 
-1. **Garimpar tópicos** em subreddits voltados a cripto;
-2. **Gerar** notícias, imagens e títulos com a API Gemini;
-3. **Revisar** o texto antes da publicação;
-4. **Publicar** no blog Ghost (com upload de imagem) e,
-5. **Divulgar** automaticamente o artigo na rede X (Twitter);
-6. **Responder** a webhooks do Ghost quando posts forem publicados manualmente.
-
-A aplicação foi desenhada para ser **multi-instância**.
-Toda a lógica “o que fazer” fica nos *configs* (YAML) e nas variáveis de ambiente; o código não precisa mudar quando você clona o repositório para outros blogs/agentes.
+The application was built with a config-first architecture, allowing multiple blog or agent instances to run from YAML configuration files and environment variables, without changing the core codebase.
 
 ---
 
-### 🗂 Estrutura geral de diretórios
+## Overview
 
-```
+This project automates the full content pipeline:
+
+1. Collect trending topics from crypto-focused subreddits
+2. Generate article titles, content, and images using Gemini
+3. Review and improve the generated HTML before publishing
+4. Publish content to Ghost with image upload support
+5. Automatically share published posts on X (Twitter)
+6. Handle Ghost webhooks for manually published posts
+
+---
+
+## Key Features
+
+- Automated Reddit topic collection
+- AI-powered article generation with Gemini
+- HTML review and content refinement
+- AI-based image generation for posts
+- Ghost CMS publishing with image upload
+- Automatic posting to X (Twitter)
+- Ghost webhook handling
+- Multi-instance architecture using YAML configs
+- Docker-ready deployment
+- Railway-friendly environment setup
+
+---
+
+## Project Structure
+
+```bash
 automacao-de-conteudo/
 │
-├── AI_agents/               # Agentes Gemini (escrita)
-│   ├── mercury_agent.py     # Gera notícia + HTML a partir do Reddit
+├── AI_agents/                    # Gemini writing agents
+│   └── mercury_agent.py          # Generates article title and HTML from Reddit content
 │
 ├── review_agent/
-│   └── review_mercury.py    # Revisa/otimiza o HTML
+│   └── review_mercury.py         # Reviews and improves generated HTML
 │
 ├── creta_image/
-│   └── mercury_image.py     # Gera imagem com Gemini e salva localmente
+│   └── mercury_image.py          # Generates images with Gemini and saves locally
 │
 ├── content_colector/
-│   └── api_connector_reddit.py  # Faz scraping do Reddit e salva JSON
+│   └── api_connector_reddit.py   # Collects Reddit posts and stores them as JSON
 │
 ├── post/
-│   ├── post_blog.py         # JWT, upload de imagem e criação de post no Ghost
-│   └── post_to_x.py         # Publica tweet no X/Twitter
+│   ├── post_blog.py              # Ghost JWT, image upload, and post creation
+│   └── post_to_x.py              # Posts content to X (Twitter)
 │
-├── configs/                 # Um YAML por “instância/agente/blog”
-│   ├── flash_crypto.yml     # Prompt, tags, frequências…
-│   └── outro_blog.yml       # (exemplo)
+├── configs/                      # One YAML file per instance / blog / agent
+│   ├── flash_crypto.yml
+│   └── another_blog.yml
 │
-├── scheduler.py             # Flask + APScheduler + Webhook Ghost
-├── main_mercury.py          # Encadeia: gerar → revisar → imagem → Ghost
+├── scheduler.py                  # Flask + APScheduler + Ghost webhook handling
+├── main_mercury.py               # Full pipeline: generate -> review -> image -> publish
 │
-├── requirements.txt         # Dependências Python
-├── Dockerfile               # Imagem para Railway/containers
+├── requirements.txt
+├── Dockerfile
 └── .dockerignore
 ```
 
-> **Config first**
-> • Chaves das APIs, domínios e flags ficam em variáveis de ambiente.
-> • Prompts, tags, frequência das tarefas e filtros de subreddit ficam nos YAMLs.
+---
+
+## Full Workflow
+
+1. The scheduler starts with Flask and APScheduler, and immediately performs an initial Reddit collection
+2. Every `mercury_frequency_hours`:
+   - Selects one post from the stored JSON
+   - Uses `mercury_agent` to generate `{title, html}`
+   - Uses `review_mercury` to improve the generated HTML
+   - Uses `mercury_image` to generate a PNG or JPG image from the title
+   - Uploads the image to Ghost
+   - Creates a draft or published post in Ghost
+3. When Ghost publishes a post manually or automatically, `/ghost-webhook` triggers `post_to_x`
+4. Reddit collection runs independently every `reddit_frequency_hours` to keep the topic source updated
 
 ---
 
-### 🔄 Fluxo completo
+## Module Details
 
-1. **Scheduler (Flask + APScheduler)** sobe → coleta Reddit logo na inicialização.
-2. A cada `mercury_frequency_hours`
-   • Escolhe um post do JSON
-   • `mercury_agent` gera `{title, html}`
-   • `review_mercury` refina o HTML
-   • `mercury_image` cria PNG/JPG baseado no título
-   • `post_blog.upload_feature_image` envia a imagem → obtém URL
-   • `post_blog.create_blog_post` grava rascunho (ou publicado) no Ghost
-3. **Webhook**: quando o Ghost publica algo (manual ou agendado) → `/ghost-webhook` → `post_to_x` solta um tweet com título + link.
-4. **Coleta Reddit** roda isolada a cada `reddit_frequency_hours` para abastecer o JSON.
+### AI Agents
+- `mercury_agent.py`
+  - Loads the selected YAML config from `configs/<instance>.yml`
+  - Reads stored Reddit topics from JSON
+  - Builds the generation prompt using the configured template
+  - Calls Gemini and returns a JSON response with `title` and `html`
+  - Removes the used topic from the JSON source
 
-## Detalhamento de Arquivos
+### Review Agent
+- `review_mercury.py`
+  - Receives the generated HTML
+  - Uses Gemini to improve grammar, clarity, and SEO quality
+  - Returns the revised HTML without commentary
 
-### 1. `AI_agents/`
+### Image Generation
+- `mercury_image.py`
+  - Generates an image using Gemini image generation
+  - Saves the file locally and returns the generated path
 
-| Arquivo                | Função                                                                                                                                                                                                                                                                                                                      |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`mercury_agent.py`** | - Carrega `configs/<instância>.yml` (“prompt\_template”, palavras-chave, etc.).<br>- Lê o JSON de tópicos do Reddit.<br>- Monta o prompt a partir do template + título/corpo/URL do post.<br>- Chama Gemini “gemini-2.0-flash” e devolve um **JSON**:<br>`{"title": "...", "html": "…"}`.<br>- Remove o post usado do JSON. |
+### Content Collector
+- `api_connector_reddit.py`
+  - Authenticates with Reddit using PRAW
+  - Collects `hot(limit=50)` posts from configured subreddits
+  - Filters, serializes, and stores the data in JSON format
 
-### 2. `review_agent/`
+### Publishing Modules
+- `post_blog.py`
+  - Generates Ghost Admin JWT
+  - Uploads feature images to Ghost
+  - Creates blog posts using the Ghost Admin API
+- `post_to_x.py`
+  - Publishes tweets using the X API v2 with OAuth 1.0a
 
-| Arquivo                 | Função                                                                                                    |
-| ----------------------- | --------------------------------------------------------------------------------------------------------- |
-| **`review_mercury.py`** | Recebe o HTML, pede ao Gemini correção gramatical, clareza, SEO. Retorna HTML revisado (sem comentários). |
+### Orchestration
+- `main_mercury.py`
+  - Executes the full pipeline from content generation to publication
+- `scheduler.py`
+  - Runs Flask with `/ghost-webhook`
+  - Schedules content generation and Reddit collection jobs
+  - Executes an immediate Reddit collection when the app starts
 
-### 3. `creta_image/`
+---
 
-| Arquivo                | Função                                                                                                                                           |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **`mercury_image.py`** | Gera uma imagem (PNG/JPEG) via modelo *gemini-2.0-flash-exp-image-generation* usando o título como prompt. Salva localmente e devolve o caminho. |
+## Configuration
 
-### 4. `content_colector/`
+Each YAML file inside `configs/` defines one instance of the system.
 
-| Arquivo                       | Função                                                                                                                                        |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`api_connector_reddit.py`** | Autentica via **PRAW**, coleta `hot(limit=50)` dos subreddits listados, filtra/serializa e grava em `data/api_connector_reddit_content.json`. |
-
-### 5. `post/`
-
-| Arquivo            | Função                                                                                                                                                                                                                            |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`post_blog.py`** | 1️⃣ `generate_jwt` cria token Ghost Admin.<br>2️⃣ `upload_feature_image` faz *multipart upload* → retorna URL da imagem.<br>3️⃣ `create_blog_post` monta `post_data` (tags, status do YAML) e envia à rota `/posts/?source=html`. |
-| **`post_to_x.py`** | Faz POST na API v2 do Twitter (X) com OAuth 1.0a.                                                                                                                                                                                 |
-
-### 6. Arquivos de orquestração
-
-| Arquivo               | Função                                                                                                                                                                                                                                                        |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`main_mercury.py`** | Pipeline completo:<br>• Gera conteúdo → revisa HTML → gera imagem → upload → cria post no Ghost.                                                                                                                                                              |
-| **`scheduler.py`**    | • `Flask` recebe **`/ghost-webhook`** (evento *post.published*).<br>• `BackgroundScheduler` agenda:<br> - `mercury_main` (intervalo do YAML).<br> - `collect_reddit_posts` (intervalo do YAML).<br>• Executa uma coleta Reddit **imediata** na inicialização. |
-
-### 7. `configs/`
-
-Cada YAML define **uma instância**:
+Example:
 
 ```yaml
 agent_name: mercury
-prompt_template: | 
-  Você é o Mercury…
-  Título-origem: {post_title}
-  Corpo-origem: {post_body}
-  URL-origem: {post_url}
-  Gere JSON…
-ghost_tags:       ["News","Crypto"]
-publish_status:   draft           # ou published
-reddit_keywords:  ["crypto","bitcoin"]
+prompt_template: |
+  You are Mercury...
+  Source title: {post_title}
+  Source body: {post_body}
+  Source URL: {post_url}
+  Return valid JSON...
+ghost_tags: ["News", "Crypto"]
+publish_status: draft
+reddit_keywords: ["crypto", "bitcoin"]
 mercury_frequency_hours: 3
 reddit_frequency_hours: 24
 ```
 
-Altere apenas esse arquivo para mudar prompt, tags ou cadência.
-Selecione o YAML desejado com a variável `CONFIG_FILE`.
+With this setup, you can create new blog or automation instances by changing only the YAML configuration and environment variables.
 
 ---
 
-### 8. Variáveis de Ambiente (Railway / .env)
+## Environment Variables
 
-| Nome                                                                                | Descrição                          |
-| ----------------------------------------------------------------------------------- | ---------------------------------- |
-| `CONFIG_FILE`                                                                       | Ex.: `flash_crypto.yml`            |
-| `GEMINI_API_KEY`                                                                    | Chave Google Generative AI         |
-| `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USERNAME` / `REDDIT_PASSWORD` |                                    |
-| `GHOST_SECRET`, `GHOST_KEY_ID`                                                      | Chave Admin Integrations           |
-| `GHOST_DOMAIN`                                                                      | Domínio (ex.: `airdrop.ghost.io`)  |
-| `GHOST_SCHEME`                                                                      | `https` ou `http` (se TLS ausente) |
-| `GHOST_VERIFY_TLS`                                                                  | `true` / `false` (upload imagem)   |
-| `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`              |                                    |
-| `PORT`                                                                              | Definido pelo Railway              |
+Required environment variables for local development, Docker, or Railway deployment:
+
+- `CONFIG_FILE` — example: `flash_crypto.yml`
+- `GEMINI_API_KEY`
+- `REDDIT_CLIENT_ID`
+- `REDDIT_CLIENT_SECRET`
+- `REDDIT_USERNAME`
+- `REDDIT_PASSWORD`
+- `GHOST_SECRET`
+- `GHOST_KEY_ID`
+- `GHOST_DOMAIN`
+- `GHOST_SCHEME`
+- `GHOST_VERIFY_TLS`
+- `X_API_KEY`
+- `X_API_SECRET`
+- `X_ACCESS_TOKEN`
+- `X_ACCESS_TOKEN_SECRET`
+- `PORT`
 
 ---
 
-### 9. Docker & Deploy
+## Docker
 
-**Dockerfile** (resumido):
+### Build the image
 
-```dockerfile
-FROM python:3.11-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
-EXPOSE 5000
-CMD ["python", "scheduler.py"]
+```bash
+docker build -t ai-content-automation .
 ```
 
-1. `docker build -t automacao .`
-2. `docker run -e CONFIG_FILE=flash_crypto.yml … -p 5000:5000 automacao`
+### Run the container
 
-No Railway:
+```bash
+docker run -e CONFIG_FILE=flash_crypto.yml -p 5000:5000 ai-content-automation
+```
 
-* Apontar “Start Command” para `python scheduler.py`.
-* Definir todas as variáveis de ambiente.
-* O container sobe, coleta Reddit uma vez, agenda jobs, expõe `/ghost-webhook`.
+For Railway deployment:
+- Set the start command to `python scheduler.py`
+- Configure all required environment variables
+- Expose the webhook endpoint `/ghost-webhook`
 
 ---
 
-### 🔧 Como criar **nova instância** (outro blog / prompt)
+## Creating a New Instance
 
-1. Copie `configs/flash_crypto.yml` para `configs/meu_blog.yml`; altere prompt, tags e frequências.
-2. No Railway clone o projeto ou crie novo ambiente.
-3. Defina `CONFIG_FILE=meu_blog.yml` + novas chaves (Ghost, X).
-4. Deploy — nenhum código muda.
+1. Copy `configs/flash_crypto.yml` to a new file such as `configs/my_blog.yml`
+2. Update prompts, tags, keywords, and schedule values
+3. Create a new Railway environment or deployment
+4. Set `CONFIG_FILE=my_blog.yml`
+5. Add the new Ghost and X credentials
+6. Deploy without changing the application code
 
-Com essa arquitetura **config-first**, o projeto “Automação de Conteúdo” escala para quantos blogs e agentes você precisar apenas com YAML + variáveis de ambiente.
+---
+
+## Use Cases
+
+- Automated crypto news generation
+- AI-assisted editorial workflows
+- Multi-blog content automation
+- Ghost CMS publishing pipelines
+- Automated social media distribution
+- Scalable AI content operations
+
+---
+
+## Author
+
+Developed by João Victor da Silva Souza
+
+---
+
+## License
+
+This project is available for study, adaptation, and extension.
